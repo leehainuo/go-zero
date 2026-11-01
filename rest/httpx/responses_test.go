@@ -443,3 +443,37 @@ func TestWriteJsonCtxMarshalFailed(t *testing.T) {
 	})
 	assert.Equal(t, http.StatusInternalServerError, w.code)
 }
+
+func TestError_MaxBytesError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{
+			name: "direct error",
+			err:  &http.MaxBytesError{Limit: 8},
+		},
+		{
+			name: "wrapped error",
+			err:  fmt.Errorf("parse body: %w", &http.MaxBytesError{Limit: 8}),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			for _, fn := range []func(http.ResponseWriter, error){
+				func(w http.ResponseWriter, err error) {
+					Error(w, err)
+				},
+				func(w http.ResponseWriter, err error) {
+					ErrorCtx(context.Background(), w, err)
+				},
+			} {
+				resp := httptest.NewRecorder()
+				fn(resp, test.err)
+				assert.Equal(t, http.StatusRequestEntityTooLarge, resp.Code)
+				assert.Contains(t, resp.Body.String(), test.err.Error())
+			}
+		})
+	}
+}
