@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"testing/iotest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/zeromicro/go-zero/rest/internal/header"
@@ -590,6 +591,69 @@ func TestParseJsonBody(t *testing.T) {
 		t.Logf("%x", v2.Signature)
 		assert.EqualValues(t, v1.Signature, v2.Signature)
 	})
+}
+
+func TestParseJsonBody_EmptyUnknownLength(t *testing.T) {
+	t.Run("optional fields", func(t *testing.T) {
+		var v struct {
+			Name string `json:"name,optional"`
+		}
+		r := httptest.NewRequest(http.MethodPost, "/", io.NopCloser(strings.NewReader("")))
+		r.Header.Set(ContentType, header.ContentTypeJson)
+
+		assert.Equal(t, int64(-1), r.ContentLength)
+		assert.NoError(t, Parse(r, &v))
+		assert.Empty(t, v.Name)
+	})
+
+	t.Run("default values", func(t *testing.T) {
+		var v struct {
+			Name string `json:"name,default=kevin"`
+			Age  int    `json:"age,default=18"`
+		}
+		r := httptest.NewRequest(http.MethodPost, "/", io.NopCloser(strings.NewReader("")))
+		r.Header.Set(ContentType, header.ContentTypeJson)
+
+		assert.NoError(t, Parse(r, &v))
+		assert.Equal(t, "kevin", v.Name)
+		assert.Equal(t, 18, v.Age)
+	})
+
+	t.Run("required fields", func(t *testing.T) {
+		var v struct {
+			Name string `json:"name"`
+		}
+		r := httptest.NewRequest(http.MethodPost, "/", io.NopCloser(strings.NewReader("")))
+		r.Header.Set(ContentType, header.ContentTypeJson)
+
+		err := Parse(r, &v)
+		assert.ErrorContains(t, err, "name")
+		assert.NotErrorIs(t, err, io.EOF)
+	})
+
+	t.Run("whitespace body", func(t *testing.T) {
+		var v struct {
+			Name string `json:"name,optional"`
+		}
+		r := httptest.NewRequest(http.MethodPost, "/", io.NopCloser(strings.NewReader(" ")))
+		r.Header.Set(ContentType, header.ContentTypeJson)
+
+		assert.ErrorIs(t, Parse(r, &v), io.EOF)
+	})
+}
+
+func TestParseJsonBody_ReadError(t *testing.T) {
+	for _, err := range []error{errors.New("read failed"), io.ErrUnexpectedEOF} {
+		t.Run(err.Error(), func(t *testing.T) {
+			var v struct {
+				Name string `json:"name,optional"`
+			}
+			r := httptest.NewRequest(http.MethodPost, "/", iotest.ErrReader(err))
+			r.Header.Set(ContentType, header.ContentTypeJson)
+
+			assert.ErrorIs(t, Parse(r, &v), err)
+		})
+	}
 }
 
 func TestParseRequired(t *testing.T) {
